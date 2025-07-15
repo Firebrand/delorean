@@ -2,6 +2,8 @@ let isRecording = false;
 let isPlaying = false;
 let recordedActions = [];
 let playbackIndex = 0;
+let playbackTabId = null;
+let navigationListener = null;
 
 // Initialize state from storage
 chrome.storage.local.get(['isRecording', 'isPlaying', 'recordedActions'], function(result) {
@@ -49,6 +51,13 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       
     case 'playbackComplete':
       completePlayback();
+      sendResponse({success: true});
+      break;
+      
+    case 'navigationOccurred':
+      if (isPlaying && sender.tab.id === playbackTabId) {
+        handleNavigationDuringPlayback();
+      }
       sendResponse({success: true});
       break;
   }
@@ -125,7 +134,10 @@ function startPlayback() {
   
   isPlaying = true;
   playbackIndex = 0;
-  chrome.storage.local.set({isPlaying: true});
+  chrome.storage.local.set({
+    isPlaying: true,
+    playbackIndex: 0
+  });
   
   // Group actions by URL to handle navigation
   const firstAction = recordedActions[0];
@@ -133,34 +145,83 @@ function startPlayback() {
   // Navigate to the first URL if needed
   chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
     const currentTab = tabs[0];
+    playbackTabId = currentTab.id;
+    
+    // Set up navigation listener for the playback tab
+    setupNavigationListener();
+    
     if (currentTab.url !== firstAction.url) {
       chrome.tabs.update(currentTab.id, {url: firstAction.url}, function() {
-        // Wait for page to load before starting playback
-        chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
-          if (tabId === currentTab.id && info.status === 'complete') {
-            chrome.tabs.onUpdated.removeListener(listener);
-            setTimeout(() => {
-              startPlaybackOnTab(currentTab.id);
-            }, 1000);
-          }
-        });
+        // The navigation listener will handle the rest
       });
     } else {
-      startPlaybackOnTab(currentTab.id);
+      // Already on the right page, start playback
+      injectAndStartPlayback(currentTab.id);
     }
   });
 }
 
+function setupNavigationListener() {
+  // Remove any existing listener
+  if (navigationListener) {
+    chrome.webNavigation.onCompleted.removeListener(navigationListener);
+  }
+  
+  // Add navigation listener for the playback tab
+  navigationListener = function(details) {
+    if (details.tabId === playbackTabId && details.frameId === 0) {
+      console.log('Navigation completed for playback tab:', details.url);
+      
+      // Small delay to ensure page is ready
+      setTimeout(() => {
+        if (isPlaying) {
+          injectAndStartPlayback(playbackTabId);
+        }
+      }, 1000);
+    }
+  };
+  
+  chrome.webNavigation.onCompleted.addListener(navigationListener);
+}
+
+function injectAndStartPlayback(tabId) {
+  // First inject the content script
+  chrome.scripting.executeScript({
+    target: {tabId: tabId},
+    files: ['content.js']
+  }, function() {
+    if (chrome.runtime.lastError) {
+      console.error('Error injecting content script:', chrome.runtime.lastError);
+      return;
+    }
+    
+    // Then start playback
+    setTimeout(() => {
+      startPlaybackOnTab(tabId);
+    }, 500);
+  });
+}
+
 function startPlaybackOnTab(tabId) {
+  console.log('Starting playback on tab', tabId, 'from index', playbackIndex);
+  
+  // Send the full recording and current index
   chrome.tabs.sendMessage(tabId, {
     action: 'startPlayback',
     actions: recordedActions,
     startIndex: playbackIndex
+  }, function(response) {
+    if (chrome.runtime.lastError) {
+      console.error('Error starting playback:', chrome.runtime.lastError);
+    }
   });
 }
 
 function playNextAction() {
   playbackIndex++;
+  
+  // Store the updated index
+  chrome.storage.local.set({playbackIndex: playbackIndex});
   
   if (playbackIndex >= recordedActions.length) {
     completePlayback();
@@ -170,30 +231,48 @@ function playNextAction() {
   const currentAction = recordedActions[playbackIndex];
   const previousAction = recordedActions[playbackIndex - 1];
   
+  console.log('Playing next action:', playbackIndex, currentAction);
+  
   // Check if we need to navigate to a new page
   if (currentAction.url !== previousAction.url) {
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      const currentTab = tabs[0];
-      chrome.tabs.update(currentTab.id, {url: currentAction.url}, function() {
-        // Wait for page to load
-        chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
-          if (tabId === currentTab.id && info.status === 'complete') {
-            chrome.tabs.onUpdated.removeListener(listener);
-            setTimeout(() => {
-              startPlaybackOnTab(currentTab.id);
-            }, 1000);
-          }
-        });
-      });
+    console.log('Navigation required from', previousAction.url, 'to', currentAction.url);
+    
+    // Navigate to the new URL
+    chrome.tabs.update(playbackTabId, {url: currentAction.url}, function() {
+      // The navigation listener will handle continuing playback
+      console.log('Navigation initiated, waiting for page load...');
+    });
+  } else {
+    // Same page, continue playback
+    console.log('Same page, continuing playback');
+    chrome.tabs.sendMessage(playbackTabId, {
+      action: 'continuePlayback',
+      actionIndex: playbackIndex
     });
   }
+}
+
+function handleNavigationDuringPlayback() {
+  console.log('Navigation detected during playback');
+  // Navigation listener will handle reinjection and continuation
 }
 
 function stopPlayback() {
   console.log('Stopping playback...');
   isPlaying = false;
   playbackIndex = 0;
-  chrome.storage.local.set({isPlaying: false});
+  playbackTabId = null;
+  
+  chrome.storage.local.set({
+    isPlaying: false,
+    playbackIndex: 0
+  });
+  
+  // Remove navigation listener
+  if (navigationListener) {
+    chrome.webNavigation.onCompleted.removeListener(navigationListener);
+    navigationListener = null;
+  }
   
   // Notify content script to stop
   chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
@@ -207,15 +286,29 @@ function stopPlayback() {
 }
 
 function completePlayback() {
+  console.log('Playback completed');
   isPlaying = false;
   playbackIndex = 0;
-  chrome.storage.local.set({isPlaying: false});
+  playbackTabId = null;
+  
+  chrome.storage.local.set({
+    isPlaying: false,
+    playbackIndex: 0
+  });
+  
+  // Remove navigation listener
+  if (navigationListener) {
+    chrome.webNavigation.onCompleted.removeListener(navigationListener);
+    navigationListener = null;
+  }
   
   // Notify popup
   chrome.runtime.sendMessage({action: 'playbackComplete'});
   
   // Notify content script
   chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-    chrome.tabs.sendMessage(tabs[0].id, {action: 'stopPlayback'});
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, {action: 'stopPlayback'}).catch(() => {});
+    }
   });
 }

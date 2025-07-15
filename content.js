@@ -64,6 +64,12 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       stopPlayback();
       sendResponse({success: true});
       break;
+    case 'continuePlayback':
+      if (request.actionIndex !== undefined) {
+        continuePlaybackFromIndex(request.actionIndex);
+      }
+      sendResponse({success: true});
+      break;
   }
   return true;
 });
@@ -329,20 +335,14 @@ function startPlayback(actions, startIndex) {
   playbackIndex = startIndex;
   
   console.log('Starting playback from index', startIndex);
+  console.log('Current URL:', window.location.href);
+  console.log('Total actions:', actions.length);
   
-  // Filter actions for current URL
-  const currentUrl = window.location.href;
-  const currentPageActions = [];
-  
-  for (let i = startIndex; i < actions.length; i++) {
-    if (actions[i].url === currentUrl) {
-      currentPageActions.push(i);
-    } else {
-      break; // Stop when we hit a different URL
-    }
-  }
+  // Get actions for current page starting from the given index
+  const currentPageActions = getActionsForCurrentPage(startIndex);
   
   if (currentPageActions.length > 0) {
+    console.log('Found', currentPageActions.length, 'actions for current page');
     playbackPageActions(currentPageActions);
   } else {
     console.log('No actions for current page');
@@ -350,8 +350,51 @@ function startPlayback(actions, startIndex) {
   }
 }
 
+function continuePlaybackFromIndex(index) {
+  if (!playbackActions || playbackActions.length === 0) {
+    console.error('No playback actions available');
+    return;
+  }
+  
+  isPlayingBack = true;
+  playbackIndex = index;
+  
+  console.log('Continuing playback from index', index);
+  
+  const currentPageActions = getActionsForCurrentPage(index);
+  
+  if (currentPageActions.length > 0) {
+    console.log('Found', currentPageActions.length, 'actions for current page');
+    playbackPageActions(currentPageActions);
+  } else {
+    console.log('No actions for current page at index', index);
+    chrome.runtime.sendMessage({action: 'playbackNextAction'});
+  }
+}
+
+function getActionsForCurrentPage(startIndex) {
+  const currentUrl = window.location.href;
+  const currentPageActions = [];
+  
+  // Collect all action indices for the current URL starting from startIndex
+  for (let i = startIndex; i < playbackActions.length; i++) {
+    if (playbackActions[i].url === currentUrl) {
+      currentPageActions.push(i);
+    } else {
+      // Stop when we hit a different URL
+      break;
+    }
+  }
+  
+  return currentPageActions;
+}
+
 async function playbackPageActions(actionIndices) {
-  for (const index of actionIndices) {
+  console.log('Playing actions:', actionIndices);
+  
+  for (let i = 0; i < actionIndices.length; i++) {
+    const index = actionIndices[i];
+    
     if (!isPlayingBack) {
       console.log('Playback stopped by user');
       break;
@@ -362,25 +405,41 @@ async function playbackPageActions(actionIndices) {
     
     await executeAction(action);
     
+    // Check if this action might cause navigation
+    const mightNavigate = (action.type === 'click' && 
+                          (action.inputType === 'submit' || 
+                           action.href || 
+                           action.value === 'Save' ||
+                           action.text?.includes('Save')));
+    
+    if (mightNavigate && i === actionIndices.length - 1) {
+      // This is the last action on the page and might cause navigation
+      console.log('Last action might cause navigation, updating index');
+      playbackIndex = index;
+      chrome.storage.local.set({playbackIndex: index});
+    }
+    
     // Variable wait time based on action type
     if (action.selector && action.selector.includes('dropbutton__toggle')) {
-      // Longer wait after dropdown toggle to ensure it opens
       await wait(1000);
-    } else if (action.type === 'click' && action.inputType === 'submit') {
-      // Longer wait after submit buttons for page changes
-      await wait(1500);
+    } else if (mightNavigate) {
+      // Give more time for potential navigation
+      await wait(2000);
     } else {
-      // Standard wait between actions
       await wait(800);
     }
   }
   
   if (isPlayingBack) {
-    // Check if there are more actions
     const lastIndex = actionIndices[actionIndices.length - 1];
+    playbackIndex = lastIndex;
+    
+    // Check if there are more actions
     if (lastIndex < playbackActions.length - 1) {
+      console.log('More actions remaining, checking next action');
       chrome.runtime.sendMessage({action: 'playbackNextAction'});
     } else {
+      console.log('All actions completed');
       chrome.runtime.sendMessage({action: 'playbackComplete'});
     }
   }
