@@ -146,6 +146,12 @@ function recordClick(event) {
 function recordClickAction(target, event) {
   const selector = getUniqueSelector(target);
   
+  // Process ID to remove everything after double dash
+  let processedId = target.id || '';
+  if (processedId && processedId.includes('--')) {
+    processedId = processedId.split('--')[0];
+  }
+  
   const actionData = {
     type: 'click',
     selector: selector,
@@ -154,7 +160,8 @@ function recordClickAction(target, event) {
     value: target.value || '',
     href: target.href || '',
     inputType: target.type || '',
-    id: target.id || '',
+    id: processedId, // Store the processed ID
+    originalId: target.id || '', // Store original for debugging
     name: target.name || '',
     className: target.className || '',
     position: {
@@ -186,13 +193,21 @@ function recordInput(event) {
   const target = event.target;
   const selector = getUniqueSelector(target);
   
+  // Process ID to remove everything after double dash
+  let processedId = target.id || '';
+  if (processedId && processedId.includes('--')) {
+    processedId = processedId.split('--')[0];
+  }
+  
   const actionData = {
     type: 'input',
     selector: selector,
     tagName: target.tagName,
     inputType: target.type || 'text',
     value: target.value,
-    checked: target.checked
+    checked: target.checked,
+    id: processedId, // Store the processed ID
+    originalId: target.id || '' // Store original for debugging
   };
   
   chrome.runtime.sendMessage({
@@ -202,9 +217,11 @@ function recordInput(event) {
 }
 
 function getUniqueSelector(element) {
-  // Try ID first
+  // Process ID for selector generation
   if (element.id) {
-    return `#${element.id}`;
+    const processedId = element.id.includes('--') ? element.id.split('--')[0] : element.id;
+    // Use a special selector that indicates we need partial matching
+    return `[id^="${processedId}"]`;
   }
   
   // For input elements with value, create a specific selector
@@ -369,24 +386,57 @@ async function playbackPageActions(actionIndices) {
   }
 }
 
+// Enhanced element finding function
+function findElementByAction(action) {
+  let element = null;
+  
+  // First try the stored selector
+  element = document.querySelector(action.selector);
+  if (element) return element;
+  
+  // If selector includes id^= (partial ID match), it's already handled by querySelector
+  // But let's also try direct ID lookup with the processed ID
+  if (action.id) {
+    // Try to find elements whose ID starts with the processed ID
+    const allElements = document.querySelectorAll('[id]');
+    for (const el of allElements) {
+      if (el.id.startsWith(action.id)) {
+        console.log(`Found element with ID starting with "${action.id}": ${el.id}`);
+        return el;
+      }
+    }
+  }
+  
+  // Try alternative methods for input buttons
+  if (action.tagName === 'INPUT' && action.value) {
+    element = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"]'))
+      .find(input => input.value === action.value);
+    if (element) {
+      console.log('Found element using value match');
+      return element;
+    }
+  }
+  
+  // Try by name attribute
+  if (action.name) {
+    element = document.querySelector(`${action.tagName.toLowerCase()}[name="${action.name}"]`);
+    if (element) {
+      console.log('Found element using name attribute');
+      return element;
+    }
+  }
+  
+  return null;
+}
+
 async function executeAction(action) {
   console.log('Executing action:', action);
   
   try {
-    const element = document.querySelector(action.selector);
+    const element = findElementByAction(action);
     
     if (!element) {
-      console.warn('Element not found:', action.selector);
-      // Try alternative selectors for input buttons
-      if (action.tagName === 'INPUT' && action.value) {
-        const altElement = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"]'))
-          .find(input => input.value === action.value);
-        if (altElement) {
-          console.log('Found element using alternative method');
-          await executeClickOnElement(altElement, action);
-          return;
-        }
-      }
+      console.warn('Element not found with any method:', action);
       return;
     }
     
@@ -559,4 +609,4 @@ function wait(ms) {
 function stopPlayback() {
   isPlayingBack = false;
   console.log('Playback stopped');
-} 
+}
