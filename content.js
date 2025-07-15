@@ -341,10 +341,21 @@ async function playbackPageActions(actionIndices) {
     }
     
     const action = playbackActions[index];
+    console.log(`Executing action ${index + 1}/${playbackActions.length}:`, action.type, action.selector);
+    
     await executeAction(action);
     
-    // Wait between actions
-    await wait(1000);
+    // Variable wait time based on action type
+    if (action.selector && action.selector.includes('dropbutton__toggle')) {
+      // Longer wait after dropdown toggle to ensure it opens
+      await wait(1000);
+    } else if (action.type === 'click' && action.inputType === 'submit') {
+      // Longer wait after submit buttons for page changes
+      await wait(1500);
+    } else {
+      // Standard wait between actions
+      await wait(800);
+    }
   }
   
   if (isPlayingBack) {
@@ -395,27 +406,74 @@ async function executeClickOnElement(element, action) {
   highlightElement(element);
   
   if (action.type === 'click') {
-    // For dropdowns, ensure parent is expanded first
+    // Check if this is a dropdown toggle button
+    if (element.classList.contains('dropbutton__toggle') || 
+        element.closest('.dropbutton__toggle')) {
+      console.log('Clicking dropdown toggle...');
+      element.click();
+      
+      // Wait for dropdown to open and add visual confirmation
+      await wait(800); // Give dropdown time to animate open
+      
+      // Verify dropdown is open
+      const dropbutton = element.closest('.dropbutton');
+      if (dropbutton) {
+        console.log('Dropdown state after click:', {
+          hasOpenClass: dropbutton.classList.contains('open'),
+          ariaExpanded: element.getAttribute('aria-expanded')
+        });
+      }
+      return;
+    }
+    
+    // For elements inside dropdowns, ensure dropdown is open first
     const dropdown = element.closest('.dropbutton');
-    if (dropdown && element.closest('.secondary-action')) {
+    if (dropdown && (element.closest('.secondary-action') || 
+                     element.closest('.dropbutton__item'))) {
       console.log('Element is in dropdown, checking if expanded...');
+      
+      // Find the toggle button
       const toggle = dropdown.querySelector('.dropbutton__toggle button');
       if (toggle) {
-        // Check if dropdown is collapsed
-        const isCollapsed = !dropdown.classList.contains('open') && 
-                          !element.offsetParent;
-        if (isCollapsed) {
-          console.log('Expanding dropdown first...');
+        // Check multiple ways if dropdown is open
+        const isOpen = dropdown.classList.contains('open') || 
+                      toggle.getAttribute('aria-expanded') === 'true' ||
+                      element.offsetParent !== null;
+        
+        if (!isOpen) {
+          console.log('Dropdown is closed, opening it first...');
           toggle.click();
-          await wait(500);
+          await wait(800); // Wait for dropdown animation
+          
+          // Double-check element is now visible
+          if (!element.offsetParent) {
+            console.log('Element still not visible, trying to click toggle again...');
+            toggle.click();
+            await wait(800);
+          }
+        } else {
+          console.log('Dropdown already open');
         }
       }
     }
     
     // Ensure element is visible and enabled
     if (!element.offsetParent) {
-      console.warn('Element is not visible');
-      return;
+      console.warn('Element is not visible after dropdown handling');
+      // Try one more time to find the element by value
+      if (action.value) {
+        const alternativeElement = Array.from(document.querySelectorAll('input[type="submit"]'))
+          .find(input => input.value === action.value && input.offsetParent);
+        if (alternativeElement) {
+          console.log('Found visible alternative element');
+          element = alternativeElement;
+          highlightElement(element);
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
     }
     
     if (element.disabled) {
@@ -423,7 +481,12 @@ async function executeClickOnElement(element, action) {
       return;
     }
     
-    console.log('Clicking element...');
+    console.log('Clicking element...', {
+      tag: element.tagName,
+      value: element.value,
+      id: element.id,
+      visible: !!element.offsetParent
+    });
     
     // Try multiple click methods
     // Method 1: Focus and click
@@ -435,25 +498,28 @@ async function executeClickOnElement(element, action) {
     // Method 2: Direct click
     element.click();
     
-    // Method 3: Dispatch mouse events
+    // Method 3: Dispatch mouse events (for stubborn elements)
+    await wait(100);
+    const mousedownEvent = new MouseEvent('mousedown', {
+      view: window,
+      bubbles: true,
+      cancelable: true
+    });
+    element.dispatchEvent(mousedownEvent);
+    
+    const mouseupEvent = new MouseEvent('mouseup', {
+      view: window,
+      bubbles: true,
+      cancelable: true
+    });
+    element.dispatchEvent(mouseupEvent);
+    
     const clickEvent = new MouseEvent('click', {
       view: window,
       bubbles: true,
-      cancelable: true,
-      clientX: action.position?.x || element.getBoundingClientRect().left + 10,
-      clientY: action.position?.y || element.getBoundingClientRect().top + 10
+      cancelable: true
     });
     element.dispatchEvent(clickEvent);
-    
-    // For submit inputs, also try submitting the form
-    if (element.tagName === 'INPUT' && element.type === 'submit') {
-      console.log('Submit button clicked, checking for form submission...');
-      const form = element.closest('form');
-      if (form && !form.hasAttribute('data-drupal-ajax-submit')) {
-        // Don't submit AJAX forms this way
-        console.log('Standard form found, letting natural submission occur');
-      }
-    }
     
   } else if (action.type === 'input') {
     // Clear and set value
@@ -493,4 +559,4 @@ function wait(ms) {
 function stopPlayback() {
   isPlayingBack = false;
   console.log('Playback stopped');
-}
+} 
