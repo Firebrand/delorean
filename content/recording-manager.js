@@ -1,7 +1,5 @@
 // Handles recording functionality in content script
 window.recordingManager = {
-  inputDebounceTimers: new Map(), // Store debounce timers for each input element
-  
   startListening() {
     if (window.recorderState.isListening) return;
     
@@ -12,28 +10,20 @@ window.recordingManager = {
     document.addEventListener('click', this.recordClick, true);
     document.addEventListener('mousedown', this.recordMouseDown, true);
     document.addEventListener('submit', this.recordSubmit, true);
-    document.addEventListener('input', this.recordInput, true);
-    document.addEventListener('change', this.recordInput, true);
-    document.addEventListener('focusout', this.recordFocusOut, true);
+    document.addEventListener('change', this.recordChange, true);
+    document.addEventListener('blur', this.recordBlur, true);
   },
 
   stopListening() {
     window.recorderState.isListening = false;
     console.log('Stopped listening for actions');
     
-    // Clear any pending input timers
-    for (const timer of this.inputDebounceTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.inputDebounceTimers.clear();
-    
     // Remove event listeners
     document.removeEventListener('click', this.recordClick, true);
     document.removeEventListener('mousedown', this.recordMouseDown, true);
     document.removeEventListener('submit', this.recordSubmit, true);
-    document.removeEventListener('input', this.recordInput, true);
-    document.removeEventListener('change', this.recordInput, true);
-    document.removeEventListener('focusout', this.recordFocusOut, true);
+    document.removeEventListener('change', this.recordChange, true);
+    document.removeEventListener('blur', this.recordBlur, true);
   },
 
   recordMouseDown(event) {
@@ -129,46 +119,28 @@ window.recordingManager = {
     window.visualFeedback.showClickFeedback(event.clientX, event.clientY);
   },
 
-  recordInput(event) {
+  recordChange(event) {
     if (!window.recorderState.isListening) return;
     
     const target = event.target;
     
-    // Only handle text-like inputs and textareas
-    if (!((target.tagName === 'INPUT' && ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(target.type)) ||
-          target.tagName === 'TEXTAREA')) {
-      // For checkboxes, radios, selects, etc., record immediately
-      if (target.tagName === 'INPUT' && ['checkbox', 'radio'].includes(target.type)) {
-        window.recordingManager.recordInputAction(target);
-      }
-      return;
-    }
-    
-    // Clear existing timer for this element
-    const existingTimer = window.recordingManager.inputDebounceTimers.get(target);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-    
-    // Set a new timer to record after user stops typing
-    const timer = setTimeout(() => {
+    // Only record change events for checkboxes, radios, and selects
+    if ((target.tagName === 'INPUT' && ['checkbox', 'radio'].includes(target.type)) ||
+        target.tagName === 'SELECT') {
+      console.log('Recording change event for:', target.type || target.tagName);
       window.recordingManager.recordInputAction(target);
-      window.recordingManager.inputDebounceTimers.delete(target);
-    }, 500); // Wait 500ms after last keystroke
-    
-    window.recordingManager.inputDebounceTimers.set(target, timer);
+    }
   },
 
-  recordFocusOut(event) {
+  recordBlur(event) {
     if (!window.recorderState.isListening) return;
     
     const target = event.target;
     
-    // When focus leaves an input, immediately record its final value
-    const timer = window.recordingManager.inputDebounceTimers.get(target);
-    if (timer) {
-      clearTimeout(timer);
-      window.recordingManager.inputDebounceTimers.delete(target);
+    // Record blur events for text inputs and textareas
+    if ((target.tagName === 'INPUT' && ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(target.type)) ||
+        target.tagName === 'TEXTAREA') {
+      console.log('Recording blur event for:', target.type || target.tagName, 'Value:', target.value);
       window.recordingManager.recordInputAction(target);
     }
   },
@@ -190,8 +162,16 @@ window.recordingManager = {
       value: target.value,
       checked: target.checked,
       id: processedId, // Store the processed ID
-      originalId: target.id || '' // Store original for debugging
+      originalId: target.id || '', // Store original for debugging
+      name: target.name || '',
+      className: target.className || ''
     };
+    
+    // Add select-specific data
+    if (target.tagName === 'SELECT') {
+      actionData.selectedIndex = target.selectedIndex;
+      actionData.selectedText = target.options[target.selectedIndex]?.text || '';
+    }
     
     console.log('Recording input action:', actionData);
     

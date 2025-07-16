@@ -138,33 +138,62 @@ window.actionExecutor = {
     element.focus();
     await window.utils.wait(100);
     
-    // Clear existing value
-    element.value = '';
-    
-    // Set the complete value at once
-    element.value = action.value;
-    
-    // Dispatch input event to trigger any listeners
-    element.dispatchEvent(new Event('input', {
-      bubbles: true,
-      cancelable: true
-    }));
-    
-    // Small delay to ensure the value is processed
-    await window.utils.wait(100);
-    
-    // Dispatch change event
-    element.dispatchEvent(new Event('change', {
-      bubbles: true,
-      cancelable: true
-    }));
-    
-    // Handle checkboxes/radios
-    if (action.inputType === 'checkbox' || action.inputType === 'radio') {
+    // Handle different input types
+    if (action.tagName === 'SELECT') {
+      // Handle select elements
+      element.value = action.value;
+      
+      // Also try setting by selectedIndex if available
+      if (action.selectedIndex !== undefined) {
+        element.selectedIndex = action.selectedIndex;
+      }
+      
+      // Dispatch change event
+      element.dispatchEvent(new Event('change', {
+        bubbles: true,
+        cancelable: true
+      }));
+      
+      console.log('Select value set:', element.value, 'Index:', element.selectedIndex);
+    } else if (action.inputType === 'checkbox' || action.inputType === 'radio') {
+      // Handle checkboxes and radios
       element.checked = action.checked;
-      element.dispatchEvent(new Event('change', {bubbles: true}));
+      element.dispatchEvent(new Event('change', {
+        bubbles: true,
+        cancelable: true
+      }));
+      
+      console.log('Checkbox/Radio checked:', element.checked);
+    } else {
+      // Handle text inputs and textareas
+      // Clear existing value
+      element.value = '';
+      
+      // Set the complete value at once
+      element.value = action.value;
+      
+      // Dispatch input event to trigger any listeners
+      element.dispatchEvent(new Event('input', {
+        bubbles: true,
+        cancelable: true
+      }));
+      
+      // Small delay to ensure the value is processed
+      await window.utils.wait(100);
+      
+      // Dispatch change event
+      element.dispatchEvent(new Event('change', {
+        bubbles: true,
+        cancelable: true
+      }));
+      
+      // Dispatch blur event to simulate user leaving the field
+      element.dispatchEvent(new Event('blur', {
+        bubbles: true,
+        cancelable: true
+      }));
+      
+      console.log('Input value set:', element.value);
     }
-    
-    console.log('Input value set:', element.value);
   }
 };
