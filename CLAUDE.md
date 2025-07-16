@@ -1,124 +1,128 @@
-# Web Action Recorder - Project Documentation
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# Web Action Recorder - Chrome Extension
 
 ## Overview
-Web Action Recorder is a Chrome extension that enables users to record and playback user interactions (clicks, typing, etc.) across websites. This documentation provides AI agents with the necessary context to understand and work with the codebase effectively.
+A Chrome extension that records and replays user interactions (clicks, typing, form inputs) across websites. Built with vanilla JavaScript using Chrome Extensions Manifest V3.
 
-## Project Structure
+## Quick Start
 
-```
-Plugy/
-├── background/                 # Background script modules
-│   ├── message-handler.js     # Handles communication between components
-│   ├── playback-manager.js    # Manages playback functionality
-│   ├── recording-manager.js   # Manages recording functionality
-│   └── state-manager.js       # Manages extension state
-├── content/                   # Content script modules
-│   ├── action-executor.js     # Executes recorded actions
-│   ├── message-handler.js     # Handles messages from background
-│   ├── playback-manager.js    # Manages playback in content context
-│   ├── recording-manager.js   # Manages recording in content context
-│   ├── selector-generator.js  # Generates CSS selectors for elements
-│   └── utils.js               # Utility functions
-├── background.js              # Main background script
-├── content.js                 # Main content script
-├── manifest.json              # Extension manifest
-├── popup.html                 # Extension popup UI
-├── popup.js                   # Popup JavaScript
-└── icon.png                   # Extension icon
-```
+### Installation & Development
+1. **Install the extension:**
+   ```bash
+   # No build required - this is vanilla JavaScript
+   # 1. Open Chrome and go to chrome://extensions/
+   # 2. Enable "Developer mode" (top right)
+   # 3. Click "Load unpacked"
+   # 4. Select this directory
+   ```
 
-## Core Components
+2. **Development workflow:**
+   - Edit source files
+   - Refresh extension in chrome://extensions/
+   - Test changes on web pages
 
-### 1. Background Scripts
-- **background.js**: Entry point for the background script, initializes all managers
-- **recording-manager.js**: Handles the recording of user actions
-- **playback-manager.js**: Manages the playback of recorded actions
-- **state-manager.js**: Maintains the extension's state
-- **message-handler.js**: Processes messages between background and content scripts
+3. **Debugging:**
+   - **Content scripts**: Open DevTools on target webpage
+   - **Background script**: Click "service worker" in chrome://extensions/
+   - **Popup**: Right-click extension icon → "Inspect popup"
 
-### 2. Content Scripts
-- **content.js**: Main content script that coordinates between modules
-- **recording-manager.js**: Records user interactions on the page
-- **playback-manager.js**: Handles playback of actions in the page context
-- **action-executor.js**: Executes specific actions during playback
-- **selector-generator.js**: Generates reliable selectors for elements
-- **utils.js**: Shared utility functions
+## Architecture
 
-### 3. User Interface
-- **popup.html**: The extension's popup interface
-- **popup.js**: Handles user interactions in the popup
+The extension follows a modular architecture with three main contexts:
 
-## Key Concepts
+### 1. Background Service Worker (`background.js` + modules)
+Coordinates all extension activities:
+- **StateManager**: Maintains global extension state
+- **RecordingManager**: Handles recording logic and storage
+- **PlaybackManager**: Manages playback execution across tabs
+- **MessageHandler**: Routes messages between components
 
-### Recording Process
-1. User initiates recording via the popup
-2. Content script starts listening for user interactions
-3. Interactions are recorded with relevant metadata (selectors, timings, etc.)
-4. Recorded actions are stored in the extension's storage
+### 2. Content Scripts (`content.js` + modules)
+Injected into web pages to interact with DOM:
+- **RecordingManager**: Captures user interactions
+- **PlaybackManager**: Executes actions on the page
+- **ActionExecutor**: Performs specific action types (click, type, etc.)
+- **SelectorGenerator**: Creates reliable CSS selectors
+- **Utils**: Shared utilities (visual feedback, ID handling)
 
-### Playback Process
-1. User initiates playback via the popup
-2. Background script coordinates the playback process
-3. Content script receives and executes the recorded actions
-4. Actions are executed with appropriate delays to mimic user behavior
-
-### State Management
-The extension maintains state in `window.recorderState` (content script) and via `StateManager` (background script). Key states include:
-- `isRecording`: Whether recording is in progress
-- `isPlaying`: Whether playback is in progress
-- `recordedActions`: Array of recorded actions
-- `playbackIndex`: Current position during playback
+### 3. Popup UI (`popup.html/js`)
+Simple control interface for users
 
 ## Message Flow
-Communication between background and content scripts is handled through Chrome's message passing API:
-- Popup <-> Background: Direct message passing
-- Background <-> Content: Tab-based message passing
 
-## Development Notes
+```
+Popup ←→ Background ←→ Content Scripts
+         (via Chrome     (per tab)
+          runtime API)
+```
+
+Key messages:
+- `startRecording`/`stopRecording`
+- `startPlayback`/`stopPlayback`
+- `recordAction`/`executeAction`
+- `getState`/`stateChanged`
+
+## Important Implementation Details
+
+### Dynamic ID Handling
+The extension strips suffixes after `--` in element IDs to handle dynamically generated IDs:
+```javascript
+// content/utils.js:stripDynamicIdSuffix()
+// Converts "button--12345" → "button"
+```
+
+### Selector Generation Priority
+1. ID (if not dynamic)
+2. Data attributes
+3. CSS path with optimizations
+
+### Visual Feedback
+- **Recording**: Red ripple effect on clicks
+- **Playback**: Green outline on target elements
+
+### Storage
+- Uses Chrome storage API
+- Recordings include metadata (timestamp, URL, user agent)
+- Import/export as JSON files
+
+## Common Development Tasks
 
 ### Adding New Action Types
-1. Add the action type to `action-executor.js`
-2. Update the recording logic in `recording-manager.js`
-3. Ensure proper serialization/deserialization in message handlers
+1. Add handler in `content/action-executor.js`
+2. Update recording logic in `content/recording-manager.js`
+3. Ensure proper serialization in message handlers
 
-### Testing
-- Test recording and playback on different types of websites
-- Verify that selectors remain reliable across page reloads
-- Test with various form inputs and interactive elements
+### Testing Scenarios
+- Test on sites with dynamic content
+- Verify cross-origin navigation during playback
+- Test form inputs with various types
+- Ensure selector reliability after page reloads
 
 ### Performance Considerations
-- Be mindful of memory usage when recording many actions
-- Optimize selector generation for reliability and performance
-- Implement proper cleanup of event listeners
+- Event listeners use capture phase for reliability
+- Cleanup listeners when recording stops
+- Limit stored actions to prevent memory issues
 
-## Common Tasks
+## Current Features
+- Click recording/playback
+- Text input recording/playback
+- Form element interactions
+- Cross-page navigation support
+- Import/export recordings
+- Visual feedback during record/playback
 
-### Debugging
-- Check the browser's developer console for logs
-- Use `console.log` statements in content scripts (visible in the page's console)
-- Inspect background script logs in Chrome's extension debugger
+## Known Limitations
+- Requires broad permissions (`<all_urls>`)
+- No automated tests
+- Limited to user-initiated actions
+- May have issues with heavily dynamic SPAs
 
-### Extending Functionality
-1. Add new action types to `action-executor.js`
-2. Update the popup UI for any new features
-3. Ensure proper state management for new features
-
-## Dependencies
-- Chrome Extensions API
-- No external dependencies required
-
-## Browser Compatibility
-- Chrome (latest version)
-- Should be compatible with other Chromium-based browsers
-
-## Security Considerations
-- The extension requires broad permissions (`<all_urls>`) to function
-- User data is stored locally in the browser's storage
-- No data is sent to external servers
-
-## Future Enhancements
-1. Add support for more interaction types
-2. Implement action editing capabilities
-3. Add export/import functionality for recorded actions
-4. Improve selector reliability for dynamic content
-5. Add visual feedback during recording and playback
+## Recent Development Focus
+Based on git history, recent work has centered on:
+- Modularizing the codebase for better maintainability
+- Improving dropdown menu and dynamic element handling
+- Adding import/export functionality
+- Enhancing playback reliability with navigation handling
